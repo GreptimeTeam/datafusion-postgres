@@ -7,6 +7,8 @@ use datafusion::sql::sqlparser::parser::ParserError;
 use datafusion::sql::sqlparser::tokenizer::Token;
 use datafusion::sql::sqlparser::tokenizer::TokenWithSpan;
 
+use crate::sql::rules::RewriteRegclassCastToSubquery;
+
 use super::rules::AliasDuplicatedProjectionRewrite;
 use super::rules::CurrentUserVariableToSessionUserFunctionCall;
 use super::rules::FixArrayLiteral;
@@ -228,6 +230,7 @@ impl PostgresCompatibilityParser {
                 Arc::new(RewriteArrayAnyAllOperation),
                 Arc::new(PrependUnqualifiedPgTableName),
                 Arc::new(RemoveQualifier),
+                Arc::new(RewriteRegclassCastToSubquery::new()),
                 Arc::new(RemoveUnsupportedTypes::new()),
                 Arc::new(FixArrayLiteral),
                 Arc::new(CurrentUserVariableToSessionUserFunctionCall),
