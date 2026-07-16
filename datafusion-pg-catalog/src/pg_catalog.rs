@@ -206,10 +206,6 @@ pub struct PgCatalogSchemaProvider<C, P> {
 
 #[async_trait]
 impl<C: CatalogInfo, P: PgCatalogContextProvider> SchemaProvider for PgCatalogSchemaProvider<C, P> {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
     fn table_names(&self) -> Vec<String> {
         PG_CATALOG_TABLES.iter().map(ToString::to_string).collect()
     }
@@ -1369,10 +1365,6 @@ pub fn create_pg_get_constraintdef() -> ScalarUDF {
     }
 
     impl ScalarUDFImpl for GetConstraintDefUDF {
-        fn as_any(&self) -> &dyn std::any::Any {
-            self
-        }
-
         fn name(&self) -> &str {
             "pg_get_constraintdef"
         }
@@ -1490,7 +1482,11 @@ where
 
 #[cfg(test)]
 mod test {
+    use datafusion::arrow::array::Array;
+    use datafusion::arrow::datatypes::Int64Type;
+
     use super::*;
+    use crate::pg_catalog::context::EmptyContextProvider;
 
     #[test]
     fn test_load_arrow_data() {
@@ -1974,5 +1970,62 @@ mod test {
             .to_vec(),
         )
         .expect("Failed to load ipc data");
+    }
+
+    #[tokio::test]
+    async fn test_pg_type_schema_and_query() {
+        let session_context = SessionContext::new();
+        setup_pg_catalog(&session_context, "datafusion", EmptyContextProvider).unwrap();
+
+        let batches = session_context
+            .sql("SELECT oid, typname FROM pg_catalog.pg_type WHERE oid = 23")
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap();
+
+        let batch = &batches[0];
+        assert_eq!(batch.schema().field(0).name(), "oid");
+        assert_eq!(batch.schema().field(0).data_type(), &DataType::Int32);
+        assert_eq!(batch.schema().field(1).name(), "typname");
+        assert_eq!(batch.column(0).as_primitive::<Int32Type>().value(0), 23);
+        assert_eq!(batch.column(1).as_string::<i32>().value(0), "int4");
+    }
+
+    #[tokio::test]
+    async fn test_pg_type_coercion_and_introspection_query() {
+        let session_context = SessionContext::new();
+        setup_pg_catalog(&session_context, "datafusion", EmptyContextProvider).unwrap();
+
+        let batches = session_context
+            .sql(
+                "SELECT oid, typname, CAST(oid AS BIGINT) AS oid_as_bigint, NULL = typname AS unknown_comparison \
+                 FROM pg_catalog.pg_type WHERE oid = 23 AND NULL IS NULL",
+            )
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap();
+
+        let batch = &batches[0];
+        assert_eq!(batch.schema().field(0).data_type(), &DataType::Int32);
+        assert_eq!(batch.schema().field(1).data_type(), &DataType::Utf8);
+        assert_eq!(batch.schema().field(2).data_type(), &DataType::Int64);
+        assert_eq!(batch.schema().field(3).data_type(), &DataType::Boolean);
+        assert_eq!(batch.column(0).as_primitive::<Int32Type>().value(0), 23);
+        assert_eq!(batch.column(1).as_string::<i32>().value(0), "int4");
+        assert_eq!(batch.column(2).as_primitive::<Int64Type>().value(0), 23);
+        assert!(batch.column(3).as_boolean().is_null(0));
+
+        let batches = session_context
+            .sql("SELECT typname FROM pg_catalog.pg_type WHERE oid = '23'")
+            .await
+            .unwrap()
+            .collect()
+            .await
+            .unwrap();
+        assert_eq!(batches[0].column(0).as_string::<i32>().value(0), "int4");
     }
 }
